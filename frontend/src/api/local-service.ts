@@ -1,6 +1,23 @@
+import {
+  SHIP_DATE_FIELD,
+  SHIPPED_STATUS,
+  canonicalRows,
+  cellText,
+  currentMonth,
+  deliveryList,
+  ledgerStats,
+  ledgerView,
+} from '@/domain/segment-ledger'
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
-import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
+import type {
+  ActionResult,
+  EntryRow,
+  ModuleMeta,
+  OverviewResult,
+  PageResult,
+} from '@/data/types'
+import type { LedgerAuthority } from '@/domain/segment-ledger'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
@@ -50,15 +67,56 @@ export function runAction(key: string, id: number, action: string): ActionResult
     pending: target !== lastStatus,
     abnormal: NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb)),
   }
+  // 管片办理出厂时自动落出厂日期（台账本月出厂口径依赖它）；已填的不覆盖
+  if (key === 'segmentprod' && target === SHIPPED_STATUS && !updated[SHIP_DATE_FIELD]) {
+    updated[SHIP_DATE_FIELD] = new Date().toISOString().slice(0, 10)
+  }
   const next = [...rows]
   next[index] = updated
-  saveRows(key, next)
+  saveRows(key, key === 'segmentprod' ? canonicalRows(next) : next)
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
 }
 
 export function resetModule(key: string): PageResult {
   resetRows(key)
   return listEntries(key)
+}
+
+// 管片生产台账页面取数：本工区 + 筛选 + 唯一排序。
+// 与导出打包（api/segment-export）走的是同一个 ledgerView，页面看到的行
+// 与打包出来的行必然一致。
+export function listSegmentLedger(
+  authority: LedgerAuthority,
+  filters: Record<string, string> = {},
+): PageResult {
+  const items = ledgerView(listRows('segmentprod'), authority, filters)
+  return { items, total: items.length, page: 1, size: items.length }
+}
+
+export type SegmentLedgerBoard = ReturnType<typeof ledgerStats> & { month: string }
+
+// 台账页三张统计卡；month 缺省取当前月。
+export function segmentLedgerBoard(authority: LedgerAuthority, month?: string): SegmentLedgerBoard {
+  const scopeMonth = month ?? currentMonth()
+  const items = ledgerView(listRows('segmentprod'), authority, {})
+  return { ...ledgerStats(items, scopeMonth), month: scopeMonth }
+}
+
+// 进度节点的交付清单：直接读管片台账，和台账页、导出结论同源同口径，
+// 两处读到的本月出厂数不可能是两套。
+export function segmentDeliveryList(
+  authority: LedgerAuthority,
+  month?: string,
+) {
+  const scopeMonth = month ?? currentMonth()
+  const inZone = listRows('segmentprod').filter(
+    (row) => cellText(row, '所属工区') === authority.zone,
+  )
+  return {
+    month: scopeMonth,
+    count: deliveryList(inZone, scopeMonth).length,
+    items: deliveryList(inZone, scopeMonth),
+  }
 }
 
 export function exportEntries(key: string): { filename: string; content: string } {

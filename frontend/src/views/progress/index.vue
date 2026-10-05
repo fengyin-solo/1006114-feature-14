@@ -18,6 +18,38 @@
       </article>
     </div>
 
+    <!-- 交付清单：直接读管片生产台账，本月出厂数与台账页、导出结论是同一份 -->
+    <div class="delivery-card">
+      <div class="delivery-head">
+        <strong>管片出厂交付清单（{{ delivery.month }}）</strong>
+        <label class="filter-item">
+          <span>统计月份</span>
+          <input type="month" :value="delivery.month" @change="changeMonth" />
+        </label>
+      </div>
+      <p class="task-meta">
+        本清单取自管片生产台账（工区：{{ store.zone }}），本月出厂 <strong>{{ delivery.count }}</strong> 环，
+        与管片生产页、台账导出结论的本月出厂数完全一致。
+      </p>
+      <table class="data-table">
+        <thead>
+          <tr><th>管片编号</th><th>管片型号</th><th>生产模具</th><th>出厂日期</th><th>出厂强度(MPa)</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="item in delivery.items" :key="item.code">
+            <td>{{ item.code }}</td>
+            <td>{{ item.model }}</td>
+            <td>{{ item.mold }}</td>
+            <td>{{ item.shipDate }}</td>
+            <td>{{ item.strength || '—' }}</td>
+          </tr>
+          <tr v-if="!delivery.items.length">
+            <td colspan="5" class="empty-state">该月暂无已出厂管片</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
     <p class="status-legend">
       <span v-for="item in statusSummary" :key="item.status" class="legend-item">
         {{ item.status }}：{{ item.count }}
@@ -78,10 +110,13 @@ import {
   listEntries,
   moduleMeta,
   runAction as applyAction,
+  segmentDeliveryList,
 } from '@/api/local-service'
+import { useSessionStore } from '@/stores/session'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('progress')
+const store = useSessionStore()
 const columns = ["节点编号", "节点名称", "计划完成日", "实际完成日", "计划掘进量", "实际掘进量", "偏差天数", "节点状态"]
 const actions = ["开始节点", "确认完成", "登记延期"]
 const statuses = ["未开始", "进行中", "已完成", "已延期"]
@@ -92,12 +127,21 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const authority = computed(() => ({ role: store.role, zone: store.zone }))
+const delivery = ref(segmentDeliveryList(authority.value))
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+function changeMonth(event: Event) {
+  const value = (event.target as HTMLInputElement).value
+  if (value) {
+    delivery.value = segmentDeliveryList(authority.value, value)
+  }
+}
 
 function resetFilters() {
   filters.value = {}
@@ -128,6 +172,7 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    delivery.value = segmentDeliveryList(authority.value, delivery.value.month)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '进度节点列表读取失败'
   }
@@ -135,3 +180,16 @@ function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.delivery-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-left: 4px solid #15803d;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.delivery-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.task-meta { color: var(--muted); font-size: 12px; margin: 6px 0; }
+</style>

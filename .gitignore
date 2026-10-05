@@ -85,3 +85,6 @@ desktop.ini
 *.db
 *.pid
 *.seed
+
+# 自测临时 bundle
+*.test.bundle.mjs
