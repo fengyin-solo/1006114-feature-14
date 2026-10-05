@@ -18,6 +18,40 @@
       </article>
     </div>
 
+    <section class="delivery-panel">
+      <header class="delivery-head">
+        <h3>交付清单 · 管片出厂（与管片生产台账同源）</h3>
+        <span class="delivery-tip">台账包内《00_本月出厂交付清单.csv》与下表取的是同一份数据，不会出现两套数</span>
+      </header>
+      <div class="stat-row">
+        <article class="stat-card">
+          <span class="stat-label">统计月份</span>
+          <strong class="stat-value">{{ delivery.month }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">本月出厂数</span>
+          <strong class="stat-value">{{ delivery.monthShipped }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">台账在册总数</span>
+          <strong class="stat-value">{{ delivery.total }}</strong>
+        </article>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>出厂日期</th><th>出厂管片数</th><th>管片编号</th></tr></thead>
+        <tbody>
+          <tr v-for="row in delivery.byDay" :key="row.day">
+            <td>{{ row.day }}</td>
+            <td>{{ row.count }}</td>
+            <td>{{ row.nos }}</td>
+          </tr>
+          <tr v-if="!delivery.byDay.length">
+            <td colspan="3" class="empty-state">{{ delivery.month }} 暂无出厂记录</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <p class="status-legend">
       <span v-for="item in statusSummary" :key="item.status" class="legend-item">
         {{ item.status }}：{{ item.count }}
@@ -79,6 +113,7 @@ import {
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import { currentMonth, monthShippedCount, querySegmentRows } from '@/data/segment-ledger'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('progress')
@@ -98,6 +133,31 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+// 交付清单与管片生产台账导出包共用 querySegmentRows/monthShippedCount，两处本月出厂数一致。
+const deliveryTick = ref(0)
+const delivery = computed(() => {
+  deliveryTick.value // 依赖 tick：管片台账变化（含本页动作触发的刷新）时重算。
+  const month = currentMonth()
+  const segmentRows = querySegmentRows()
+  const shipped = segmentRows.filter((row) =>
+    String(row.status) === '已出厂' && String(row['出厂日期'] ?? '').startsWith(month))
+  const grouped = new Map<string, EntryRow[]>()
+  for (const row of shipped) {
+    const day = String(row['出厂日期'] ?? '').slice(0, 10)
+    const list = grouped.get(day) ?? []
+    list.push(row)
+    grouped.set(day, list)
+  }
+  const byDay = [...grouped.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([day, list]) => ({
+      day,
+      count: list.length,
+      nos: list.map((row) => String(row['管片编号'])).join('、'),
+    }))
+  return { month, monthShipped: monthShippedCount(segmentRows, month), total: segmentRows.length, byDay }
+})
 
 function resetFilters() {
   filters.value = {}
@@ -124,6 +184,7 @@ function runAction(action: string, row: EntryRow) {
 
 function reload() {
   errorMessage.value = ''
+  deliveryTick.value += 1
   try {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
@@ -135,3 +196,13 @@ function reload() {
 
 onMounted(reload)
 </script>
+
+<style scoped>
+.delivery-panel {
+  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; margin-bottom: 12px;
+}
+.delivery-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.delivery-head h3 { margin: 0; font-size: 15px; }
+.delivery-tip { font-size: 12px; color: var(--muted); }
+</style>

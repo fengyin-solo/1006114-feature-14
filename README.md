@@ -69,3 +69,39 @@ npm run build
   `frontend/src/data/seed.ts`。
 - 状态流转只允许在 `local-service.ts` 里改，页面组件不做业务判断。
 - 想回到初始数据：清掉浏览器里 `shield-tunnel-construction:entries` 这一项，或调用 `resetModule(模块)`。
+
+## 管片出厂台账（segmentprod）
+
+管片台账是给建设单位的交付件，走一套独立但同源的口径，核心代码：
+
+- `src/data/segment-ledger.ts`：唯一取数/分卷/统计口径。页面表格、出厂打包、进度节点交付清单
+  全部经 `querySegmentRows()` / `monthShippedCount()` 取数，两处「本月出厂数」不会出现两套。
+- `src/api/segment-service.ts`：权限、登记幂等、导入覆盖、分卷导出与断点续传。
+- `src/data/export-store.ts`：导出任务与分块暂存（IndexedDB）；`src/data/zip.ts` 是零依赖 ZIP(STORED) 打包。
+
+打包与导入规则：
+
+- 按「管片型号 + 生产模具」分卷，每卷 CSV 固定含 **管片编号、钢筋笼批号、养护天数、出厂强度**；
+  包内另附 `00_包清单.csv`（每卷行数/字节/CRC、总行数、整包校验和、本月出厂数）、
+  `00_缺栏清单.csv`（缺哪一栏点到具体管片编号）、`00_本月出厂交付清单.csv`（与进度节点同源）。
+- 页面按当前筛选看到的行数 = 包清单总行数 = 各卷行数之和。
+- 分卷先逐块写入 IndexedDB 并对 CRC/行数校验，全部通过才原子合成一个 ZIP；中途断了可在
+  「导出任务」面板从断掉的分块续传，校验不过绝不产生半包文件。
+- 导入补数按 **管片编号覆盖**（不追加，空单元格不抹原值）；文件内重复编号只入一条（后行覆盖）；
+  台账中不存在的编号与格式非法行进失败清单并写清原因；浏览器存储写不下时整批撤销。
+- 存量管片在本地数据 schema v2 迁移时按「生产日期」重排一遍（见 `local-store.ts`）。
+
+权限（纯前端内置账号，可在右上角切换以验证）：
+
+- 出厂台账的导出/导入/登记/状态流转只放给 **本工区资料员**（默认 `一工区`）；
+  监理、访客、其他工区资料员拿到链接也只能查看，服务层对越权操作当场拒绝（FORBIDDEN）。
+- 账号定义在 `src/stores/session.ts`，当前选择持久化在 localStorage。
+
+## 校验脚本（不进生产包）
+
+```bash
+cd frontend
+node scripts/verify-ledger.mjs   # CSV/分卷/CRC/ZIP/打包口径/导入解析
+node scripts/verify-service.mjs  # 权限拒绝/登记幂等/导入覆盖/配额回滚/存量重排迁移
+```
+

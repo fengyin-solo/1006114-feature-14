@@ -1,6 +1,7 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
+import { LEDGER_WORK_AREA, useSessionStore } from '@/stores/session'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
@@ -30,6 +31,13 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
 
 export function runAction(key: string, id: number, action: string): ActionResult {
   const meta = moduleMeta(key)
+  // 管片台账的状态流转与导出/导入同口径：只放给本工区资料员，越权当场拒绝。
+  if (key === 'segmentprod' && !useSessionStore().canManageLedger) {
+    return {
+      ok: false,
+      message: `越权操作已拒绝：管片台账仅${LEDGER_WORK_AREA}资料员可操作，当前账号只能查看`,
+    }
+  }
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
@@ -49,6 +57,13 @@ export function runAction(key: string, id: number, action: string): ActionResult
     status: target,
     pending: target !== lastStatus,
     abnormal: NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb)),
+  }
+  // 管片办理出厂时回填出厂日期（本月出厂数按这一列统计，不能漏）。
+  if (key === 'segmentprod' && action === '办理出厂' && !String(updated['出厂日期'] ?? '').trim()) {
+    updated['出厂日期'] = new Date().toISOString().slice(0, 10)
+  }
+  if (key === 'segmentprod') {
+    updated['生产状态'] = target
   }
   const next = [...rows]
   next[index] = updated
